@@ -8,7 +8,7 @@ const appendToFile = (
   filepath,
   data,
   format = undefined,
-  callback = () => {}
+  callback = () => {},
 ) => {
   if (format === undefined) {
     fs.appendFile(filepath, data, callback);
@@ -17,11 +17,16 @@ const appendToFile = (
   fs.appendFile(filepath, data, format, callback);
 };
 
+appendToFile(
+  "repositories.csv",
+  "login,full_name,created_at,stargazers_count,watchers_count,language,has_projects,has_wiki,license_name\n",
+);
+
 const octokit = new Octokit({
   auth: process.env.GITHUB_AUTH_TOKEN,
 });
 
-const fetchRepos = async () => {
+const fetchRepos = async (username) => {
   let responses = [];
   const nextPattern = /(?<=<)([\S]*)(?=>; rel="Next")/i;
   let pagesRemaining = true;
@@ -34,7 +39,7 @@ const fetchRepos = async () => {
     });
     console.log("Fetching: " + url);
 
-    const data = await response.data.items;
+    const data = await response.data;
     responses = [...responses, ...data];
 
     const linkHeader = response.headers.link;
@@ -45,45 +50,49 @@ const fetchRepos = async () => {
     if (pagesRemaining) {
       url = linkHeader.match(nextPattern)[0];
     }
+
+    new Promise((resolve) => setTimeout(resolve, 1000)).then(() =>
+      console.log("New data fetching: " + url),
+    );
   }
 
-  appendToFile("repositories.csv", "");
+  for (const response of responses) {
+    const {
+      full_name,
+      created_at,
+      stargazers_count,
+      watchers_count,
+      language,
+      has_projects,
+      has_wiki,
+      license,
+    } = response;
 
-  for (const u of responses) {
-    if (!u.login) continue;
-    console.log("Fetching info about: ", u.login);
-    const user_res = await octokit.request(`GET /users/${u.login}`);
-    const user = await user_res.data;
-
-    const new_user_record = {
-      login: user.login,
-      name: user.name,
-      company: user.company?.trim("@"),
-      location: user.location,
-      email: user.email,
-      hireable: user.hireable,
-      bio: user.bio,
-      public_repos: user.public_repos,
-      followers: user.followers,
-      following: user.following,
-      created_at: user.created_at,
-    };
-
-    for (const record in new_user_record) {
-      if (typeof new_user_record[record] === "string") {
-        new_user_record[record] = new_user_record[record]
-          .replaceAll(",", "!!comma!!")
-          .replaceAll("\n", " ")
-          .replaceAll("|", "!!pipe!!");
-      }
+    let license_name = "";
+    if (license) {
+      license_name = license.name;
     }
 
-    const out = `${new_user_record.login}, ${new_user_record.name}, ${new_user_record.company}, ${new_user_record.location}, ${new_user_record.email}, ${new_user_record.hireable}, ${new_user_record.bio}, ${new_user_record.public_repos}, ${new_user_record.followers}, ${new_user_record.following}, ${new_user_record.created_at}`;
+    const str = `${username}, ${full_name}, ${created_at}, ${stargazers_count}, ${watchers_count}, ${language}, ${has_projects}, ${has_wiki}, ${license_name}`;
 
-    appendToFile("data/users.csv", out + "\n", () => {
-      console.log("Adding: ", new_user_record.login);
+    appendToFile("repositories.csv", str + "\n", () => {
+      console.log("Adding:", full_name);
     });
   }
 };
 
-fetchRepos();
+fs.readFile("users.csv", "utf8", function (err, data) {
+  const users = data.split("\n");
+
+  const usernames = users.map((u) => {
+    return u.split(",")[0];
+  });
+
+  for (let i = 1; i < usernames.length; i++) {
+    fetchRepos(usernames[i]);
+
+    new Promise((resolve) => setTimeout(resolve, 1000)).then(() =>
+      console.log("New data fetching for: " + usernames[i + 1]),
+    );
+  }
+});
